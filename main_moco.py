@@ -24,14 +24,15 @@ import torchvision.models as models
 
 import moco.loader
 import moco.builder
+from ImageDataLoader import SimpleImageLoader, TripletImageLoader
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
+# parser.add_argument('data', metavar='DIR',
+#                     help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -97,6 +98,13 @@ parser.add_argument('--aug-plus', action='store_true',
 parser.add_argument('--cos', action='store_true',
                     help='use cosine lr schedule')
 
+parser.add_argument('--datadir', default='../kaist_naver_dataset')
+parser.add_argument('--trainfile', default='../kaist_naver_dataset/kaist_naver_prod200k_class265_train01.txt', type=str, help='file name of train')
+parser.add_argument('--validfile', default='../kaist_naver_dataset/kaist_naver_prod200k_class265_val.txt', type=str, help='file name of validation')
+parser.add_argument('--testfile', default='../kaist_naver_dataset/kaist_naver_prod200k_class265_test.txt', type=str, help='file name of test')
+parser.add_argument('--unlabelfile', default='..//kaist_naver_dataset/kaist_naver_prod200k_class265_unlabel.txt', type=str, help='file name of test')
+parser.add_argument('--imResize', default=256, type=int, help='') #256
+parser.add_argument('--imsize', default=224, type=int, help='')
 
 def main():
     args = parser.parse_args()
@@ -217,7 +225,7 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
+    # traindir = os.path.join(args.data, 'train')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     if args.aug_plus:
@@ -244,10 +252,27 @@ def main_worker(gpu, ngpus_per_node, args):
             normalize
         ]
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
-
+    # train_dataset = datasets.ImageFolder(
+    #     traindir,
+    #     moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    default_augmentations = [transforms.Resize(args.imResize),
+                             transforms.RandomResizedCrop(args.imsize, scale=(0.2, 1.)),
+                             transforms.RandomApply([
+                                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+                             ], p=0.8),
+                             transforms.RandomGrayscale(p=0.2),                             
+                             transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=0.5),                    
+                             transforms.RandomHorizontalFlip(),         
+                             transforms.ToTensor(),
+                             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),]
+    
+    train_dataset = SimpleImageLoader(args, 'train',
+                          transform=transforms.Compose(augmentation))  
+    valid_dataset = SimpleImageLoader(args, 'validation',
+                          transform=transforms.Compose(augmentation))
+    unlabel_dataset = SimpleImageLoader(args, 'unlabel',
+                          transform=transforms.Compose(augmentation))     
+    
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
@@ -255,7 +280,15 @@ def main_worker(gpu, ngpus_per_node, args):
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)        
+    
+    valid_loader = torch.utils.data.DataLoader(
+        valid_dataset, batch_size=args.batch_size, shuffle=False, 
+        num_workers=4, pin_memory=True, drop_last=False)
+
+    unlabel_loader = torch.utils.data.DataLoader(
+        unlabel_dataset, batch_size=args.batch_size, shuffle=False, 
+        num_workers=4, pin_memory=True, drop_last=False)
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -273,6 +306,8 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
             }, is_best=False, filename='checkpoint_{:04d}.pth.tar'.format(epoch))
+
+        
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):

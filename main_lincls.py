@@ -21,13 +21,15 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
+from ImageDataLoader import SimpleImageLoader, TripletImageLoader
+
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
+# parser.add_argument('data', metavar='DIR',
+#                     help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -35,7 +37,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -79,6 +81,16 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 parser.add_argument('--pretrained', default='', type=str,
                     help='path to moco pretrained checkpoint')
+
+# Arguments for KAIST-NAVER Datasets
+parser.add_argument('--datadir', default='../kaist_naver_dataset')
+parser.add_argument('--trainfile', default='../kaist_naver_dataset/kaist_naver_prod200k_class265_train01.txt', type=str, help='file name of train')
+parser.add_argument('--validfile', default='../kaist_naver_dataset/kaist_naver_prod200k_class265_val.txt', type=str, help='file name of validation')
+parser.add_argument('--testfile', default='../kaist_naver_dataset/kaist_naver_prod200k_class265_test.txt', type=str, help='file name of test')
+parser.add_argument('--unlabelfile', default='..//kaist_naver_dataset/kaist_naver_prod200k_class265_unlabel.txt', type=str, help='file name of test')
+parser.add_argument('--imResize', default=256, type=int, help='') #256
+parser.add_argument('--imsize', default=224, type=int, help='')
+
 
 best_acc1 = 0
 
@@ -240,40 +252,72 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
+    # traindir = os.path.join(args.data, 'train')
+    # valdir = os.path.join(args.data, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+    # train_dataset = datasets.ImageFolder(
+    #     traindir,
+    #     transforms.Compose([
+    #         transforms.RandomResizedCrop(224),
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ]))
+
+    default_augmentations = [transforms.Resize(args.imResize),
+                             transforms.RandomResizedCrop(args.imsize),
+                             transforms.RandomHorizontalFlip(),
+                             transforms.RandomVerticalFlip(),
+                             transforms.ToTensor(),
+                             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),]
+
+    train_dataset = SimpleImageLoader(args, 'train',
+                          transform=transforms.Compose(default_augmentations))  
+    valid_dataset = SimpleImageLoader(args, 'validation',
+                          transform=transforms.Compose(default_augmentations))
+    # unlabel_dataset = SimpleImageLoader(args, 'unlabel',
+    #                       transform=transforms.Compose(default_augmentations)) 
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
         train_sampler = None
 
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+    #     num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+
+    # val_loader = torch.utils.data.DataLoader(
+    #     datasets.ImageFolder(valdir, transforms.Compose([
+    #         transforms.Resize(256),
+    #         transforms.CenterCrop(224),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ])),
+    #     batch_size=args.batch_size, shuffle=False,
+    #     num_workers=args.workers, pin_memory=True)
+
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+    
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+        valid_dataset, batch_size=args.batch_size, shuffle=False, 
+        num_workers=args.workers, pin_memory=True, drop_last=False)
 
+    # unlabel_loader = torch.utils.data.DataLoader(
+    #     unlabel_dataset, batch_size=opts.batchsize, shuffle=False, 
+    #     num_workers=4, pin_memory=True, drop_last=False)
+    
     if args.evaluate:
+        test_dataset = SimpleImageLoader(args, 'test',
+                          transform=transforms.Compose(default_augmentations))
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=args.batch_size, shuffle=False, 
+            num_workers=args.workers, pin_memory=True, drop_last=False)
+
         validate(val_loader, model, criterion, args)
         return
 

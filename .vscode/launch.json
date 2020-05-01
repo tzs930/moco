@@ -1,0 +1,19 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": ["--dist-url", "tcp://localhost:10001", "--multiprocessing-distributed", "--world-size", 
+                "1", "--rank", "0", "--worker", "32", "--resume", "models/moco_v2_800ep_pretrain.pth.tar",                
+                "--mlp", "--moco-t", "0.2", "--aug-plus", "--cos"],
+            "env": {"PYTHONPATH": "~/workspace/moco"}
+        }
+    ]
+}
